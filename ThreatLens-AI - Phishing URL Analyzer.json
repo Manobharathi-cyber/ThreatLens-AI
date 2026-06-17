@@ -1,0 +1,633 @@
+{
+  "name": "SecureMe AI - Phishing URL Analyzer",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.url }}",
+              "rightValue": "http://",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              },
+              "id": "8aa3bd32-886d-4275-a650-7097b0c3ebfb"
+            },
+            {
+              "leftValue": "={{ $json.body.url }}",
+              "rightValue": "https://",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              },
+              "id": "1ae56be6-29e5-44b8-9a4f-e42262931c90"
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "b7fe6419-b99d-45ca-881b-c558bbe7553c",
+      "name": "Validate URL Format",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        464,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const inputUrl = $input.item.json.body.url;\nconst fullUrl = inputUrl.toLowerCase();\n\nconst protocolMatch = inputUrl.match(/^https?:\\/\\/(.+)/);\nconst withoutProtocol = protocolMatch ? protocolMatch[1] : inputUrl;\n\nconst pathStart = withoutProtocol.indexOf('/');\nconst hostname = pathStart > -1 ? withoutProtocol.substring(0, pathStart) : withoutProtocol;\n\nconst domainLength = hostname.length;\nconst subdomains = hostname.split('.').length - 2;\nconst hasAtSymbol = inputUrl.includes('@');\nconst ipPattern = /\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b/;\nconst hasIpAddress = ipPattern.test(hostname);\n\nconst suspiciousKeywords = ['login', 'verify', 'secure', 'update', 'account', 'bank', 'password', 'reset'];\nconst foundKeywords = suspiciousKeywords.filter(keyword => fullUrl.includes(keyword));\n\nreturn {\n  url: inputUrl,\n  hostname: hostname,\n  domainLength: domainLength,\n  subdomains: subdomains,\n  hasAtSymbol: hasAtSymbol,\n  hasIpAddress: hasIpAddress,\n  foundKeywords: foundKeywords\n};"
+      },
+      "id": "5be6712d-dd0f-4515-9c86-fdbaef7d5ec4",
+      "name": "Extract URL Features",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = $input.item.json;\nlet riskScore = 0;\nconst reasons = [];\n\nif (data.hasAtSymbol) {\n  riskScore += 10;\n  reasons.push(\"Contains @ symbol (+10)\");\n}\n\nif (data.hasIpAddress) {\n  riskScore += 20;\n  reasons.push(\"Contains IP address (+20)\");\n}\n\nif (data.subdomains > 3) {\n  riskScore += 15;\n  reasons.push(\"More than 3 subdomains (+15)\");\n}\n\nconst keywordScores = {\n  login: 10,\n  verify: 10,\n  update: 10,\n  secure: 5,\n  bank: 15,\n  account: 5,\n  password: 10,\n  reset: 10\n};\n\nif (data.foundKeywords && data.foundKeywords.length > 0) {\n  data.foundKeywords.forEach(keyword => {\n    const score = keywordScores[keyword] || 0;\n    if (score > 0) {\n      riskScore += score;\n      reasons.push(\"Contains \\\"\" + keyword + \"\\\" keyword (+\" + score + \")\");\n    }\n  });\n}\n\nif (data.vtRiskScore) {\n  riskScore += data.vtRiskScore;\n  if (data.vtMalicious > 0) {\n    reasons.push(\"VirusTotal: \" + data.vtMalicious + \" malicious detections\");\n  }\n  if (data.vtSuspicious > 0) {\n    reasons.push(\"VirusTotal: \" + data.vtSuspicious + \" suspicious detections\");\n  }\n}\n\nlet classification;\nif (riskScore <= 30) {\n  classification = \"Safe\";\n} else if (riskScore <= 70) {\n  classification = \"Suspicious\";\n} else {\n  classification = \"Malicious\";\n}\n\nreturn {\n  url: data.url,\n  hostname: data.hostname,\n  risk_score: riskScore,\n  classification: classification,\n  reasons: reasons,\n  virustotal: {\n    malicious: data.vtMalicious || 0,\n    suspicious: data.vtSuspicious || 0,\n    harmless: data.vtHarmless || 0\n  }\n};"
+      },
+      "id": "d57b1307-a4b2-40a2-aad1-8ab044447b0e",
+      "name": "Calculate Risk Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "options": {}
+      },
+      "id": "5932c07f-20dd-4921-bca2-c4196c90f1fe",
+      "name": "Respond - Analysis Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2608,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "error",
+              "type": "string"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "value": "Invalid URL",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "67d503aa-5ebe-4b92-a1ae-52217bc40d6a",
+      "name": "Format Error Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        688,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "bff466a7-d478-49af-819b-9fa8236b20f8",
+      "name": "Respond - Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        912,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.virustotal.com/api/v3/urls",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "virusTotalApi",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "url",
+              "value": "={{ $json.url }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "99d768d1-b42d-4a17-9ea1-ff040662a70f",
+      "name": "VirusTotal URL Scan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        336
+      ],
+      "credentials": {
+        "virusTotalApi": {
+          "id": "6aY3GBU9LpfmntL3",
+          "name": "VirusTotal account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/analyses/{{ $json.data.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {}
+      },
+      "id": "831a61e0-f3db-43f9-bd9e-efd21921608f",
+      "name": "VirusTotal Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1136,
+        240
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const vtData = $input.item.json.data && $input.item.json.data.attributes && $input.item.json.data.attributes.stats ? $input.item.json.data.attributes.stats : {};\nconst malicious = vtData.malicious || 0;\nconst suspicious = vtData.suspicious || 0;\nconst harmless = vtData.harmless || 0;\n\nlet vtRiskScore = 0;\n\nif (malicious > 5) {\n  vtRiskScore = 60;\n} else if (malicious > 0) {\n  vtRiskScore = 40;\n}\n\nif (suspicious > 0) {\n  vtRiskScore += 20;\n}\n\nreturn {\n  vtMalicious: malicious,\n  vtSuspicious: suspicious,\n  vtHarmless: harmless,\n  vtRiskScore: vtRiskScore\n};"
+      },
+      "id": "4d632bee-ec80-4715-bbfb-d93a97e215f0",
+      "name": "Extract VT Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "vtMalicious",
+              "name": "vtMalicious",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "vtSuspicious",
+              "name": "vtSuspicious",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "vtHarmless",
+              "name": "vtHarmless",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "vtRiskScore",
+              "name": "vtRiskScore",
+              "value": 0,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "b7602fbd-675b-417c-8b36-4cfd2df50250",
+      "name": "Handle VT Scan Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1360,
+        528
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "vtMalicious",
+              "name": "vtMalicious",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "vtSuspicious",
+              "name": "vtSuspicious",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "vtHarmless",
+              "name": "vtHarmless",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "vtRiskScore",
+              "name": "vtRiskScore",
+              "value": 0,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f2abf7cc-f221-4c64-a587-f5b4945d62c8",
+      "name": "Handle VT Report Error",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1360,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analyze this URL security scan:\n\nURL: {{ $json.url }}\nRisk Score: {{ $json.risk_score }}\nClassification: {{ $json.classification }}\nReasons: {{ $json.reasons.join(\", \") }}\nVirusTotal: {{ $json.virustotal.malicious }} malicious, {{ $json.virustotal.suspicious }} suspicious, {{ $json.virustotal.harmless }} harmless\n\nProvide a professional cybersecurity analysis with:\n1. Threat summary\n2. Risk explanation\n3. Indicators found\n4. Security recommendation",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "You are a professional cybersecurity analyst. Provide clear, actionable security analysis."
+        }
+      },
+      "id": "13bcbcb1-c5df-483a-aac6-12eaec33bccd",
+      "name": "AI Security Analyst",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2032,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "builtInTools": {},
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "id": "165a20b9-f826-49fa-9e02-366e81cec7f1",
+      "name": "OpenAI Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        2048,
+        464
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "GZobVP60LxcuJlt6",
+          "name": "n8n free OpenAI API credits"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{ \"threat_summary\": \"Brief summary\", \"risk_explanation\": \"Detailed explanation\", \"indicators_found\": [\"indicator1\", \"indicator2\"], \"security_recommendation\": \"Recommendation text\" }"
+      },
+      "id": "bcabb649-0e61-470b-aa23-aa1cc8be66f3",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2176,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "url",
+              "name": "url",
+              "value": "={{ $(\"Calculate Risk Score\").item.json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "risk_score",
+              "name": "risk_score",
+              "value": "={{ $(\"Calculate Risk Score\").item.json.risk_score }}",
+              "type": "number"
+            },
+            {
+              "id": "classification",
+              "name": "classification",
+              "value": "={{ $(\"Calculate Risk Score\").item.json.classification }}",
+              "type": "string"
+            },
+            {
+              "id": "virustotal",
+              "name": "virustotal",
+              "value": "={{ $(\"Calculate Risk Score\").item.json.virustotal }}",
+              "type": "object"
+            },
+            {
+              "id": "analysis",
+              "name": "analysis",
+              "value": "={{ $(\"AI Security Analyst\").item.json.output }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7567f52e-eae2-4649-a78c-276e5a6d1854",
+      "name": "Format Final Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2384,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-url",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b52d8573-f08b-4e71-ba5b-110ae29acc50",
+      "name": "Webhook - Receive URL",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        368
+      ],
+      "webhookId": "f42e2eb3-943a-4318-ace9-0b6d678468cd"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "69cb501d-fe3e-4695-8d3a-90075b385d87",
+      "name": "Combine Features & VT",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1584,
+        240
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Validate URL Format": {
+      "main": [
+        [
+          {
+            "node": "Extract URL Features",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract URL Features": {
+      "main": [
+        [
+          {
+            "node": "VirusTotal URL Scan",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Combine Features & VT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Risk Score": {
+      "main": [
+        [
+          {
+            "node": "AI Security Analyst",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error Response": {
+      "main": [
+        [
+          {
+            "node": "Respond - Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond - Analysis Result": {
+      "main": [
+        []
+      ]
+    },
+    "VirusTotal URL Scan": {
+      "main": [
+        [
+          {
+            "node": "VirusTotal Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle VT Scan Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VirusTotal Report": {
+      "main": [
+        [
+          {
+            "node": "Extract VT Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle VT Report Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract VT Data": {
+      "main": [
+        [
+          {
+            "node": "Combine Features & VT",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Handle VT Scan Error": {
+      "main": [
+        [
+          {
+            "node": "Combine Features & VT",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Handle VT Report Error": {
+      "main": [
+        [
+          {
+            "node": "Combine Features & VT",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "AI Security Analyst": {
+      "main": [
+        [
+          {
+            "node": "Format Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Security Analyst",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Security Analyst",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Final Response": {
+      "main": [
+        [
+          {
+            "node": "Respond - Analysis Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Receive URL": {
+      "main": [
+        [
+          {
+            "node": "Validate URL Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine Features & VT": {
+      "main": [
+        [
+          {
+            "node": "Calculate Risk Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "14030ac2-ed00-4c56-b4b6-5c4d31ab06ce",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "34f8b23bf83d27b546765941964706a480a395c7b380c1225c86d4de519008fd"
+  },
+  "nodeGroups": [],
+  "id": "1A3vnpj6miy7sG8L",
+  "tags": []
+}
